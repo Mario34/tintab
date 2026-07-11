@@ -1,0 +1,24 @@
+{
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:tintap}",
+      "name": "Debug Tintap",
+      "target": "Tintap",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug Tintap"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:tintap}",
+      "name": "Release Tintap",
+      "target": "Tintap",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release Tintap"
+    }
+  ]
+}
