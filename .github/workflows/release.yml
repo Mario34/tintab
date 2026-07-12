@@ -15,7 +15,7 @@ concurrency:
 jobs:
   validate:
     name: Validate release tag
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -60,7 +60,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-15
             arch: arm64
           - runner: macos-15-intel
             arch: x86_64
@@ -81,6 +81,7 @@ jobs:
             exit 1
           fi
           swift --version
+          swift --version | grep -Eq 'Swift version ([6-9]|[1-9][0-9]+)\.'
 
       - name: Run tests
         run: swift test
