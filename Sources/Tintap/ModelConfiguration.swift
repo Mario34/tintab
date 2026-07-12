@@ -15,18 +15,38 @@ enum ModelAPIFormat: String, CaseIterable, Sendable {
 }
 
 struct ModelConfiguration: Sendable {
+    static let defaultSystemPrompt = "You are a precise translation engine. Return only the translation, preserving meaning, formatting, and proper nouns."
+
     var apiFormat: ModelAPIFormat
     var baseURL: String
     var model: String
     var targetLanguage: String
     var apiKey: String
+    var systemPrompt: String
+
+    init(
+        apiFormat: ModelAPIFormat,
+        baseURL: String,
+        model: String,
+        targetLanguage: String,
+        apiKey: String,
+        systemPrompt: String = ModelConfiguration.defaultSystemPrompt
+    ) {
+        self.apiFormat = apiFormat
+        self.baseURL = baseURL
+        self.model = model
+        self.targetLanguage = targetLanguage
+        self.apiKey = apiKey
+        self.systemPrompt = systemPrompt
+    }
 
     static let `default` = ModelConfiguration(
         apiFormat: .openAICompatible,
         baseURL: "https://api.openai.com/v1",
         model: "gpt-4.1-mini",
         targetLanguage: "Simplified Chinese",
-        apiKey: ""
+        apiKey: "",
+        systemPrompt: defaultSystemPrompt
     )
 
     var requestURL: URL? {
@@ -63,6 +83,7 @@ final class ModelSettingsStore {
         static let baseURL = "model.baseURL"
         static let model = "model.name"
         static let targetLanguage = "model.targetLanguage"
+        static let systemPrompt = "model.systemPrompt"
         static let apiKeyAccount = "model.apiKey"
     }
 
@@ -76,7 +97,8 @@ final class ModelSettingsStore {
             baseURL: defaults.string(forKey: Keys.baseURL) ?? ModelConfiguration.default.baseURL,
             model: defaults.string(forKey: Keys.model) ?? ModelConfiguration.default.model,
             targetLanguage: defaults.string(forKey: Keys.targetLanguage) ?? ModelConfiguration.default.targetLanguage,
-            apiKey: (try? KeychainStore.read(account: Keys.apiKeyAccount)) ?? ""
+            apiKey: (try? KeychainStore.read(account: Keys.apiKeyAccount)) ?? "",
+            systemPrompt: defaults.string(forKey: Keys.systemPrompt) ?? ModelConfiguration.default.systemPrompt
         )
     }
 
@@ -85,6 +107,7 @@ final class ModelSettingsStore {
         defaults.set(configuration.baseURL, forKey: Keys.baseURL)
         defaults.set(configuration.model, forKey: Keys.model)
         defaults.set(configuration.targetLanguage, forKey: Keys.targetLanguage)
+        defaults.set(configuration.systemPrompt, forKey: Keys.systemPrompt)
         try KeychainStore.save(configuration.apiKey, account: Keys.apiKeyAccount)
     }
 }

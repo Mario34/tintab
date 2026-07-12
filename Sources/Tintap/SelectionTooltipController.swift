@@ -112,6 +112,10 @@ final class SelectionTooltipController {
     }
 
     func show(selection: TextSelection, preferences: TooltipPreferences) {
+        guard !selection.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            DebugLogger.log("Ignoring tooltip request for an empty selection.")
+            return
+        }
         guard !isPinned || !panel.isVisible else { return }
         selectedText = selection.text
         resultText = ""

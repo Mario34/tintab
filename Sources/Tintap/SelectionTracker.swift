@@ -20,10 +20,9 @@ final class SelectionTracker: NSObject {
     private var lastPointer = NSEvent.mouseLocation
     private var selectionReadWorkItem: DispatchWorkItem?
     private var clipboardReadWorkItem: DispatchWorkItem?
+    private var selectionEmissionWorkItem: DispatchWorkItem?
     private var latestSelectionRequestID = 0
     private var activeClipboardFallbackRequestID: Int?
-    private var lastSelectionSignature = ""
-    private var lastSelectionTime = Date.distantPast
     private var clipboardSnapshot: [NSPasteboardItem]?
     private var clipboardChangeCount = 0
     private(set) var isRunning = false
@@ -89,6 +88,10 @@ final class SelectionTracker: NSObject {
         let focusedElement = unsafeDowncast(focusedValue, to: AXUIElement.self)
 
         guard let rawText = copyAttribute(kAXSelectedTextAttribute, from: focusedElement) as? String else {
+            if selectedRangeLength(in: focusedElement) == 0 {
+                DebugLogger.log("Selection range is empty; skipping clipboard fallback.")
+                return
+            }
             DebugLogger.log("Focused element does not expose AXSelectedText.")
             beginClipboardFallback(for: focusedElement, requestID: requestID, pointer: pointer)
             return
@@ -97,7 +100,10 @@ final class SelectionTracker: NSObject {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             DebugLogger.log("Selection is empty.")
-            beginClipboardFallback(for: focusedElement, requestID: requestID, pointer: pointer)
+            if rawText.isEmpty, selectedRangeLength(in: focusedElement) != 0 {
+                DebugLogger.log("Selection range may be non-empty; trying clipboard fallback.")
+                beginClipboardFallback(for: focusedElement, requestID: requestID, pointer: pointer)
+            }
             return
         }
 
@@ -128,24 +134,18 @@ final class SelectionTracker: NSObject {
     }
 
     private func emit(text: String, anchor: TextSelection.Anchor, source: String, pointer: NSPoint) {
-        let signature: String
-        switch anchor {
-        case let .accessibilityBounds(bounds):
-            signature = "\(text)|\(bounds)"
-        case let .pointer(point):
-            signature = "\(text)|\(point)"
+        // Deliver only the most recent selection after the event stream settles.
+        // This avoids showing stale text when several selections happen quickly.
+        selectionEmissionWorkItem?.cancel()
+        let selection = TextSelection(text: text, anchor: anchor, pointer: pointer)
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.isRunning else { return }
+            self.selectionEmissionWorkItem = nil
+            DebugLogger.log("Selection from \(source): \(text.prefix(80))")
+            self.onSelection?(selection)
         }
-
-        // Some apps deliver two mouse-up events. A short debounce prevents flicker but allows reselecting the same text.
-        let now = Date()
-        guard signature != lastSelectionSignature || now.timeIntervalSince(lastSelectionTime) > 0.4 else {
-            DebugLogger.log("Ignoring duplicate selection event.")
-            return
-        }
-        lastSelectionSignature = signature
-        lastSelectionTime = now
-        DebugLogger.log("Selection from \(source): \(text.prefix(80))")
-        onSelection?(TextSelection(text: text, anchor: anchor, pointer: pointer))
+        selectionEmissionWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
     }
 
     private func beginClipboardFallback(for focusedElement: AXUIElement?, requestID: Int, pointer: NSPoint) {
@@ -249,6 +249,8 @@ final class SelectionTracker: NSObject {
         selectionReadWorkItem = nil
         clipboardReadWorkItem?.cancel()
         clipboardReadWorkItem = nil
+        selectionEmissionWorkItem?.cancel()
+        selectionEmissionWorkItem = nil
         activeClipboardFallbackRequestID = nil
         if shouldRestoreClipboard {
             restoreClipboard()
@@ -301,5 +303,17 @@ final class SelectionTracker: NSObject {
             return nil
         }
         return unsafeDowncast(value, to: AXValue.self)
+    }
+
+    private func selectedRangeLength(in element: AXUIElement) -> Int? {
+        guard let value = copyAttribute(kAXSelectedTextRangeAttribute, from: element),
+              CFGetTypeID(value) == AXValueGetTypeID() else {
+            return nil
+        }
+        let rangeValue = unsafeDowncast(value, to: AXValue.self)
+        guard AXValueGetType(rangeValue) == .cfRange else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(rangeValue, .cfRange, &range) else { return nil }
+        return range.length
     }
 }

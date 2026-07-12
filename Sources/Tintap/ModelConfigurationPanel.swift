@@ -11,6 +11,8 @@ final class ModelConfigurationPanel: NSWindowController, NSWindowDelegate {
     private let modelField: NSTextField
     private let targetLanguageField: NSTextField
     private let apiKeyField: NSSecureTextField
+    private let systemPromptTextView: NSTextView
+    private let systemPromptScrollView: NSScrollView
     private let offsetXField: NSTextField
     private let offsetYField: NSTextField
 
@@ -49,10 +51,24 @@ final class ModelConfigurationPanel: NSWindowController, NSWindowDelegate {
         apiKeyField = NSSecureTextField(string: configuration.apiKey)
         apiKeyField.placeholderString = "sk-…"
         apiKeyField.translatesAutoresizingMaskIntoConstraints = false
+        systemPromptTextView = NSTextView()
+        systemPromptTextView.string = configuration.systemPrompt
+        systemPromptTextView.font = .systemFont(ofSize: 13)
+        systemPromptTextView.isRichText = false
+        systemPromptTextView.isAutomaticQuoteSubstitutionEnabled = false
+        systemPromptTextView.isAutomaticDashSubstitutionEnabled = false
+        systemPromptTextView.textContainerInset = NSSize(width: 6, height: 6)
+        systemPromptScrollView = NSScrollView()
+        systemPromptScrollView.translatesAutoresizingMaskIntoConstraints = false
+        systemPromptScrollView.borderType = .bezelBorder
+        systemPromptScrollView.hasVerticalScroller = true
+        systemPromptScrollView.documentView = systemPromptTextView
+        systemPromptScrollView.widthAnchor.constraint(equalToConstant: 350).isActive = true
+        systemPromptScrollView.heightAnchor.constraint(equalToConstant: 104).isActive = true
         offsetXField = Self.numberField(value: tooltipPreferences.offsetX)
         offsetYField = Self.numberField(value: tooltipPreferences.offsetY)
 
-        let contentRect = NSRect(x: 0, y: 0, width: 520, height: 465)
+        let contentRect = NSRect(x: 0, y: 0, width: 520, height: 590)
         let panel = NSPanel(
             contentRect: contentRect,
             styleMask: [.titled, .closable, .utilityWindow],
@@ -62,6 +78,8 @@ final class ModelConfigurationPanel: NSWindowController, NSWindowDelegate {
         panel.title = "Tintap 模型配置"
         panel.isReleasedWhenClosed = false
         panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.moveToActiveSpace]
         panel.center()
 
         super.init(window: panel)
@@ -83,7 +101,8 @@ final class ModelConfigurationPanel: NSWindowController, NSWindowDelegate {
             baseURL: baseURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
             model: modelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
             targetLanguage: targetLanguageField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
-            apiKey: apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            apiKey: apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
+            systemPrompt: systemPromptTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         do {
             try store.save(configuration)
@@ -99,6 +118,10 @@ final class ModelConfigurationPanel: NSWindowController, NSWindowDelegate {
 
     @objc private func cancel() {
         dismissPanel()
+    }
+
+    @objc private func restoreDefaultPrompt() {
+        systemPromptTextView.string = ModelConfiguration.defaultSystemPrompt
     }
 
     private func configureContent(in panel: NSPanel) {
@@ -122,6 +145,7 @@ final class ModelConfigurationPanel: NSWindowController, NSWindowDelegate {
         form.addArrangedSubview(Self.row(title: "模型", field: modelField))
         form.addArrangedSubview(Self.row(title: "目标语言", field: targetLanguageField))
         form.addArrangedSubview(Self.row(title: "API Key", field: apiKeyField))
+        form.addArrangedSubview(Self.promptRow(textView: systemPromptScrollView, target: self))
         form.addArrangedSubview(Self.divider())
         form.addArrangedSubview(Self.row(title: "水平偏移", field: offsetXField))
         form.addArrangedSubview(Self.row(title: "垂直偏移", field: offsetYField))
@@ -201,6 +225,27 @@ final class ModelConfigurationPanel: NSWindowController, NSWindowDelegate {
         let row = NSStackView(views: [label, field])
         row.orientation = .horizontal
         row.alignment = .centerY
+        row.spacing = 12
+        return row
+    }
+
+    private static func promptRow(textView: NSView, target: AnyObject) -> NSStackView {
+        let label = NSTextField(labelWithString: "系统提示词")
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.alignment = .right
+        label.widthAnchor.constraint(equalToConstant: 72).isActive = true
+
+        let resetButton = NSButton(title: "恢复默认", target: target, action: #selector(restoreDefaultPrompt))
+        resetButton.bezelStyle = .inline
+        resetButton.controlSize = .small
+        let fieldStack = NSStackView(views: [textView, resetButton])
+        fieldStack.orientation = .vertical
+        fieldStack.alignment = .trailing
+        fieldStack.spacing = 4
+
+        let row = NSStackView(views: [label, fieldStack])
+        row.orientation = .horizontal
+        row.alignment = .top
         row.spacing = 12
         return row
     }

@@ -3,10 +3,16 @@ import Foundation
 struct TranslationService {
     private let session: URLSession
     private let cache: TranslationCacheStore
+    private let statistics: UsageStatisticsStore
 
-    init(session: URLSession = .shared, cache: TranslationCacheStore = .shared) {
+    init(
+        session: URLSession = .shared,
+        cache: TranslationCacheStore = .shared,
+        statistics: UsageStatisticsStore = .shared
+    ) {
         self.session = session
         self.cache = cache
+        self.statistics = statistics
     }
 
     func translate(_ text: String, using configuration: ModelConfiguration) async throws -> String {
@@ -24,14 +30,18 @@ struct TranslationService {
             apiFormat: configuration.apiFormat,
             model: configuration.model,
             targetLanguage: configuration.targetLanguage,
+            systemPrompt: configuration.systemPrompt,
             sourceText: text
         )
         if let cachedTranslation = await cache.value(for: cacheKey) {
             DebugLogger.log("Returning cached translation.")
+            await statistics.recordCacheHit()
             return cachedTranslation
         }
 
-        let systemPrompt = "You are a precise translation engine. Return only the translation, preserving meaning, formatting, and proper nouns."
+        let systemPrompt = configuration.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? ModelConfiguration.defaultSystemPrompt
+            : configuration.systemPrompt
         let userPrompt = "Translate the following text into \(configuration.targetLanguage):\n\n\(text)"
 
         var request = URLRequest(url: endpoint)
@@ -60,28 +70,42 @@ struct TranslationService {
             ))
         }
 
-        let (data, response) = try await session.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else { throw TranslationError.invalidResponse }
-        if httpResponse.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("text/html") == true {
-            throw TranslationError.webPageResponse(endpoint.absoluteString)
-        }
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            throw TranslationError.requestFailed(errorMessage(from: data) ?? "HTTP \(httpResponse.statusCode)")
-        }
+        await statistics.recordRequestStarted()
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else { throw TranslationError.invalidResponse }
+            if httpResponse.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("text/html") == true {
+                throw TranslationError.webPageResponse(endpoint.absoluteString)
+            }
+            guard (200..<300).contains(httpResponse.statusCode) else {
+                throw TranslationError.requestFailed(errorMessage(from: data) ?? "HTTP \(httpResponse.statusCode)")
+            }
 
-        let translated: String?
-        switch configuration.apiFormat {
-        case .openAICompatible:
-            translated = try? JSONDecoder().decode(OpenAIResponse.self, from: data).choices.first?.message.content
-        case .anthropicMessages:
-            translated = try? JSONDecoder().decode(AnthropicResponse.self, from: data).content
-                .first(where: { $0.type == "text" })?.text
+            let translated: String?
+            let inputTokens: Int?
+            let outputTokens: Int?
+            switch configuration.apiFormat {
+            case .openAICompatible:
+                let response = try? JSONDecoder().decode(OpenAIResponse.self, from: data)
+                translated = response?.choices.first?.message.content
+                inputTokens = response?.usage?.promptTokens
+                outputTokens = response?.usage?.completionTokens
+            case .anthropicMessages:
+                let response = try? JSONDecoder().decode(AnthropicResponse.self, from: data)
+                translated = response?.content.first(where: { $0.type == "text" })?.text
+                inputTokens = response?.usage?.inputTokens
+                outputTokens = response?.usage?.outputTokens
+            }
+            guard let translated = translated?.trimmingCharacters(in: .whitespacesAndNewlines), !translated.isEmpty else {
+                throw TranslationError.invalidResponse
+            }
+            await cache.set(translated, for: cacheKey)
+            await statistics.recordRequestSucceeded(inputTokens: inputTokens, outputTokens: outputTokens)
+            return translated
+        } catch {
+            await statistics.recordRequestFailed()
+            throw error
         }
-        guard let translated = translated?.trimmingCharacters(in: .whitespacesAndNewlines), !translated.isEmpty else {
-            throw TranslationError.invalidResponse
-        }
-        await cache.set(translated, for: cacheKey)
-        return translated
     }
 
     private func errorMessage(from data: Data) -> String? {
@@ -112,6 +136,7 @@ struct TranslationCacheKey: Hashable {
     let apiFormat: ModelAPIFormat
     let model: String
     let targetLanguage: String
+    let systemPrompt: String
     let sourceText: String
 }
 
@@ -127,7 +152,17 @@ private struct OpenAIRequest: Encodable {
 
 private struct OpenAIResponse: Decodable {
     struct Choice: Decodable { let message: Message }
+    struct Usage: Decodable {
+        let promptTokens: Int?
+        let completionTokens: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case promptTokens = "prompt_tokens"
+            case completionTokens = "completion_tokens"
+        }
+    }
     let choices: [Choice]
+    let usage: Usage?
 }
 
 private struct AnthropicRequest: Encodable {
@@ -147,7 +182,17 @@ private struct AnthropicResponse: Decodable {
         let type: String
         let text: String?
     }
+    struct Usage: Decodable {
+        let inputTokens: Int?
+        let outputTokens: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case inputTokens = "input_tokens"
+            case outputTokens = "output_tokens"
+        }
+    }
     let content: [ContentBlock]
+    let usage: Usage?
 }
 
 private struct APIErrorResponse: Decodable {

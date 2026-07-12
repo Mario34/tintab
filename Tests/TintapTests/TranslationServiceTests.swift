@@ -37,6 +37,46 @@ struct TranslationServiceTests {
     }
 
     @Test
+    func translateUsesConfiguredSystemPromptAndRecordsTokenUsage() async throws {
+        defer { URLProtocolStub.requestHandler = nil }
+        URLProtocolStub.requestHandler = { request in
+            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            #expect(body.contains("Translate like a pirate."))
+            guard let url = request.url else { throw URLError(.badURL) }
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let data = """
+            {
+              "choices": [{"message": {"role": "assistant", "content": "Ahoy"}}],
+              "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}
+            }
+            """.data(using: .utf8)!
+            return (response, data)
+        }
+
+        let suiteName = "TintapTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let statistics = UsageStatisticsStore(defaults: defaults)
+        let service = makeService(statistics: statistics)
+        var configuration = makeConfiguration()
+        configuration.systemPrompt = "Translate like a pirate."
+
+        _ = try await service.translate("Hello", using: configuration)
+        let snapshot = await statistics.current()
+
+        #expect(snapshot.requestCount == 1)
+        #expect(snapshot.successCount == 1)
+        #expect(snapshot.inputTokens == 12)
+        #expect(snapshot.outputTokens == 3)
+        #expect(snapshot.totalTokens == 15)
+    }
+
+    @Test
     func translateAnthropicParsesSuccessfulResponse() async throws {
         defer { URLProtocolStub.requestHandler = nil }
         URLProtocolStub.requestHandler = { request in
@@ -258,8 +298,11 @@ struct TranslationServiceTests {
         #expect(counter.currentValue() == 2)
     }
 
-    private func makeService(cache: TranslationCacheStore = TranslationCacheStore()) -> TranslationService {
-        TranslationService(session: makeStubbedSession(), cache: cache)
+    private func makeService(
+        cache: TranslationCacheStore = TranslationCacheStore(),
+        statistics: UsageStatisticsStore = UsageStatisticsStore()
+    ) -> TranslationService {
+        TranslationService(session: makeStubbedSession(), cache: cache, statistics: statistics)
     }
 
     private func makeStubbedSession() -> URLSession {

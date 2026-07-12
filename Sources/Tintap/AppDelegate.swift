@@ -7,12 +7,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let tooltip = SelectionTooltipController()
     private let modelSettings = ModelSettingsStore.shared
     private let tooltipPreferences = TooltipPreferencesStore.shared
+    private let usageStatistics = UsageStatisticsStore.shared
     private let translator = TranslationService()
     private var statusItem: NSStatusItem?
     private var selectionToggleItem: NSMenuItem?
     private var accessibilityPermissionRetryTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        configureApplicationMenu()
         configureStatusItem()
         tooltip.onTranslate = { [weak self] text in self?.translate(text) }
         selectionTracker.onSelection = { [weak self] selection in
@@ -100,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         selectionToggleItem = toggleItem
         menu.addItem(.separator())
         menu.addItem(withTitle: "设置…", action: #selector(openModelConfiguration), keyEquivalent: ",").target = self
+        menu.addItem(withTitle: "用量统计…", action: #selector(openUsageStatistics), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "退出 Tintap", action: #selector(quit), keyEquivalent: "q").target = self
         item.menu = menu
@@ -108,6 +111,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openModelConfiguration() {
         ModelConfigurationPanel.present(store: modelSettings, tooltipStore: tooltipPreferences)
+    }
+
+    @objc private func openUsageStatistics() {
+        UsageStatisticsPanel.present(store: usageStatistics)
+    }
+
+    private func configureApplicationMenu() {
+        let mainMenu = NSMenu()
+
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu(title: "Tintap")
+        appMenu.addItem(withTitle: "退出 Tintap", action: #selector(quit), keyEquivalent: "q").target = self
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        NSApp.mainMenu = mainMenu
     }
 
     @objc private func toggleSelectionTracking() {
