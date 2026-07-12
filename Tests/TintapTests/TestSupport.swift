@@ -17,6 +17,31 @@ final class RequestCounter: @unchecked Sendable {
     }
 }
 
+func requestBodyData(from request: URLRequest) -> Data {
+    if let body = request.httpBody {
+        return body
+    }
+    guard let stream = request.httpBodyStream else {
+        return Data()
+    }
+
+    stream.open()
+    defer { stream.close() }
+
+    let bufferSize = 4_096
+    let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+    defer { buffer.deallocate() }
+
+    var body = Data()
+    while stream.hasBytesAvailable {
+        let count = stream.read(buffer, maxLength: bufferSize)
+        guard count >= 0 else { return Data() }
+        if count == 0 { break }
+        body.append(buffer, count: count)
+    }
+    return body
+}
+
 final class URLProtocolStub: URLProtocol {
     nonisolated(unsafe) static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
 

@@ -34,7 +34,7 @@ jobs:
           swift --version | grep -Eq 'Swift version ([6-9]|[1-9][0-9]+)\.'
 
       - name: Run tests
-        run: swift test
+        run: zsh scripts/test.sh
 
       - name: Build release binary
         run: swift build -c release

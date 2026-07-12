@@ -50,7 +50,10 @@ struct ModelConfiguration: Sendable {
     )
 
     var requestURL: URL? {
-        guard var components = URLComponents(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+        guard var components = URLComponents(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              components.host?.isEmpty == false else {
             return nil
         }
         let trimmedPath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))

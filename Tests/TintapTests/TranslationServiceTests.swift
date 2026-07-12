@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import Tintap
 
+@Suite(.serialized)
 struct TranslationServiceTests {
     @Test
     func translateOpenAICompatibleParsesSuccessfulResponse() async throws {
@@ -40,7 +41,7 @@ struct TranslationServiceTests {
     func translateUsesConfiguredSystemPromptAndRecordsTokenUsage() async throws {
         defer { URLProtocolStub.requestHandler = nil }
         URLProtocolStub.requestHandler = { request in
-            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            let body = String(data: requestBodyData(from: request), encoding: .utf8) ?? ""
             #expect(body.contains("Translate like a pirate."))
             guard let url = request.url else { throw URLError(.badURL) }
             let response = HTTPURLResponse(
@@ -60,7 +61,7 @@ struct TranslationServiceTests {
 
         let suiteName = "TintapTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
         let statistics = UsageStatisticsStore(defaults: defaults)
         let service = makeService(statistics: statistics)
         var configuration = makeConfiguration()
@@ -262,7 +263,7 @@ struct TranslationServiceTests {
         URLProtocolStub.requestHandler = { request in
             counter.increment()
             guard let url = request.url else { throw URLError(.badURL) }
-            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            let body = String(data: requestBodyData(from: request), encoding: .utf8) ?? ""
             let translated = body.contains("Japanese") ? "こんにちは" : "你好"
             let response = HTTPURLResponse(
                 url: url,

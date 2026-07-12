@@ -138,10 +138,10 @@ swift run Tintap --ui-preview=result
 ## 测试
 
 ```zsh
-swift test
+zsh scripts/test.sh
 ```
 
-测试覆盖模型 URL 归一化、OpenAI / Anthropic 响应解析、错误映射、翻译缓存和 Tooltip 尺寸规范。
+该脚本会自动适配完整 Xcode 与仅安装 Command Line Tools 的环境；GitHub Actions 也使用相同入口。测试覆盖模型 URL 归一化、OpenAI / Anthropic 响应解析、错误映射、翻译缓存和 Tooltip 尺寸规范。
 
 ## 打包生产应用
 
