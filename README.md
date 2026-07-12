@@ -1,6 +1,24 @@
 # Tintap
 
+<p align="center">
+  <img src="Resources/AppIcon.iconset/icon_512x512.png" alt="Tintap 应用图标" width="160">
+</p>
+
 Tintap 是一个原生 macOS 划词翻译工具。用户在任意已支持辅助功能的应用中选中文本后，Tintap 会在选区附近显示紧凑 Tooltip，并通过可配置的模型服务返回翻译结果。
+
+## 界面预览
+
+初始 Tooltip 提供翻译、复制与拖动操作：
+
+![Tintap 初始 Tooltip](docs/images/tooltip-actions.png)
+
+翻译完成后，结果会在选区附近的面板中展示：
+
+![Tintap 翻译结果](docs/images/translation-result.png)
+
+可在模型配置窗口中设置兼容 OpenAI Chat Completions 或 Anthropic Messages API 的服务：
+
+![Tintap 模型配置](docs/images/model-settings.png)
 
 ## 功能
 
@@ -13,8 +31,6 @@ Tintap 是一个原生 macOS 划词翻译工具。用户在任意已支持辅助
 - 凭据安全：API Key 仅保存在本机 Keychain；其余模型配置保存在 UserDefaults。
 - VS Code / Chromium 兼容：无法通过辅助功能读取选区时，可短暂模拟 `Command-C`，读取选中文本后恢复原剪贴板内容。
 - 菜单栏控制：可随时启用或禁用全局划词；辅助功能授权在生效后会自动恢复监听。
-
-当前版本仅提供翻译能力，不包含 ChatGPT 搜索功能。
 
 ## 系统要求
 
@@ -155,3 +171,9 @@ dist/Tintap.app
 TINTAP_SDK=/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk \
 zsh scripts/package.sh --replace
 ```
+
+## GitHub 自动发布
+
+仓库使用 `vMAJOR.MINOR.PATCH` 标签触发 GitHub Actions 发布。例如应用版本为 `0.2.0` 时，在对应的 `main` 提交上推送 `v0.2.0` 标签。工作流会在 macOS arm64 和 Intel 环境中分别测试、打包，并创建包含两个架构 ZIP 和 SHA-256 校验文件的 GitHub Release。
+
+当前自动发布产物使用 ad-hoc 签名且未经 Apple 公证，用户首次打开时需要手动允许应用运行。完整的分支、版本和发布步骤见 [发布规则](docs/RELEASING.md)。

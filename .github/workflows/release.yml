@@ -1,0 +1,163 @@
+name: Release macOS app
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: macos-14
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Check out source and history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag, branch, and app version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must use vMAJOR.MINOR.PATCH, got: ${tag}" >&2
+            exit 1
+          fi
+
+          git fetch origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "Release tags must point to a commit contained in origin/main." >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          plist_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+          if [[ "${version}" != "${plist_version}" ]]; then
+            echo "Tag version ${version} does not match Info.plist version ${plist_version}." >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Package (${{ matrix.arch }})
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Verify runner architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_arch="$(uname -m)"
+          if [[ "${actual_arch}" != "${{ matrix.arch }}" ]]; then
+            echo "Expected ${{ matrix.arch }} runner, got ${actual_arch}." >&2
+            exit 1
+          fi
+          swift --version
+
+      - name: Run tests
+        run: swift test
+
+      - name: Package application
+        run: zsh scripts/package.sh
+
+      - name: Verify application bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict --verbose=2 dist/Tintap.app
+          file dist/Tintap.app/Contents/MacOS/Tintap
+          file dist/Tintap.app/Contents/MacOS/Tintap | grep -q "${{ matrix.arch }}"
+
+      - name: Create distribution ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="dist/Tintap-${{ needs.validate.outputs.version }}-macOS-${{ matrix.arch }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent dist/Tintap.app "${archive}"
+
+      - name: Upload packaged application
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tintap-macOS-${{ matrix.arch }}
+          path: dist/Tintap-*-macOS-${{ matrix.arch }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs:
+      - validate
+      - build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Download packaged applications
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum release-assets/*.zip | sed 's#release-assets/##' > release-assets/SHA256SUMS.txt
+          cat release-assets/SHA256SUMS.txt
+
+      - name: Create release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          cat > release-notes.md <<'EOF'
+          ## 下载与安装
+
+          - Apple Silicon 用户下载 `arm64` ZIP。
+          - Intel Mac 用户下载 `x86_64` ZIP。
+          - 解压后将 `Tintap.app` 拖入“应用程序”目录。
+          - 当前版本使用 ad-hoc 签名且未经 Apple 公证。首次启动时请右键应用并选择“打开”；如果仍被阻止，请到“系统设置 → 隐私与安全性”选择“仍要打开”。
+          - 启动后需要在“系统设置 → 隐私与安全性 → 辅助功能”中允许 Tintap。
+          - 可使用 `SHA256SUMS.txt` 校验下载文件。
+
+          最低系统要求：macOS 14。
+          EOF
+
+          gh release create "${GITHUB_REF_NAME}" \
+            release-assets/*.zip \
+            release-assets/SHA256SUMS.txt \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "Tintap ${{ needs.validate.outputs.version }}" \
+            --generate-notes \
+            --notes-file release-notes.md
