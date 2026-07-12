@@ -18,6 +18,10 @@ final class SelectionTracker: NSObject {
     private var mouseUpMonitor: Any?
     private var mouseDownLocation: NSPoint?
     private var lastPointer = NSEvent.mouseLocation
+    private var selectionReadWorkItem: DispatchWorkItem?
+    private var clipboardReadWorkItem: DispatchWorkItem?
+    private var latestSelectionRequestID = 0
+    private var activeClipboardFallbackRequestID: Int?
     private var lastSelectionSignature = ""
     private var lastSelectionTime = Date.distantPast
     private var clipboardSnapshot: [NSPasteboardItem]?
@@ -34,21 +38,23 @@ final class SelectionTracker: NSObject {
             guard let self else { return }
 
             if event.type == .leftMouseDown {
+                self.cancelPendingSelectionWork(shouldRestoreClipboard: true)
                 self.mouseDownLocation = NSEvent.mouseLocation
                 return
             }
 
             // The target app updates its accessibility selection just after mouse-up.
             self.lastPointer = NSEvent.mouseLocation
+            defer { self.mouseDownLocation = nil }
             guard self.isLikelySelectionGesture(event) else { return }
-            self.perform(#selector(Self.readCurrentSelection), with: nil, afterDelay: 0.08)
+            self.scheduleSelectionRead(pointer: self.lastPointer)
         }
         isRunning = true
         DebugLogger.log("Global mouse-up monitor installed.")
     }
 
     func stop() {
-        NSObject.cancelPreviousPerformRequests(withTarget: self)
+        cancelPendingSelectionWork(shouldRestoreClipboard: true)
         if let mouseUpMonitor {
             NSEvent.removeMonitor(mouseUpMonitor)
         }
@@ -56,33 +62,49 @@ final class SelectionTracker: NSObject {
         isRunning = false
     }
 
-    @objc private func readCurrentSelection() {
+    private func scheduleSelectionRead(pointer: NSPoint) {
+        cancelPendingSelectionWork(shouldRestoreClipboard: true)
+        latestSelectionRequestID += 1
+        let requestID = latestSelectionRequestID
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.readCurrentSelection(requestID: requestID, pointer: pointer)
+        }
+        selectionReadWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: workItem)
+    }
+
+    private func readCurrentSelection(requestID: Int, pointer: NSPoint) {
+        guard isRunning, requestID == latestSelectionRequestID else {
+            DebugLogger.log("Ignoring stale accessibility selection read.")
+            return
+        }
+        selectionReadWorkItem = nil
         let systemWide = AXUIElementCreateSystemWide()
         guard let focusedValue = copyAttribute(kAXFocusedUIElementAttribute, from: systemWide),
               CFGetTypeID(focusedValue) == AXUIElementGetTypeID() else {
             DebugLogger.log("No accessibility focused element.")
-            beginClipboardFallback(for: nil)
+            beginClipboardFallback(for: nil, requestID: requestID, pointer: pointer)
             return
         }
         let focusedElement = unsafeDowncast(focusedValue, to: AXUIElement.self)
 
         guard let rawText = copyAttribute(kAXSelectedTextAttribute, from: focusedElement) as? String else {
             DebugLogger.log("Focused element does not expose AXSelectedText.")
-            beginClipboardFallback(for: focusedElement)
+            beginClipboardFallback(for: focusedElement, requestID: requestID, pointer: pointer)
             return
         }
 
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             DebugLogger.log("Selection is empty.")
-            beginClipboardFallback(for: focusedElement)
+            beginClipboardFallback(for: focusedElement, requestID: requestID, pointer: pointer)
             return
         }
 
         guard let rangeValueReference = copyAttribute(kAXSelectedTextRangeAttribute, from: focusedElement),
               CFGetTypeID(rangeValueReference) == AXValueGetTypeID() else {
             DebugLogger.log("Focused element does not expose AXSelectedTextRange; using pointer anchor.")
-            emit(text: text, anchor: .pointer(lastPointer), source: "Accessibility text + pointer")
+            emit(text: text, anchor: .pointer(pointer), source: "Accessibility text + pointer", pointer: pointer)
             return
         }
         let rangeValue = unsafeDowncast(rangeValueReference, to: AXValue.self)
@@ -90,7 +112,7 @@ final class SelectionTracker: NSObject {
         guard let boundsValue = copyBounds(for: rangeValue, in: focusedElement),
               AXValueGetType(boundsValue) == .cgRect else {
             DebugLogger.log("Focused element does not expose bounds for the selected range; using pointer anchor.")
-            emit(text: text, anchor: .pointer(lastPointer), source: "Accessibility text + pointer")
+            emit(text: text, anchor: .pointer(pointer), source: "Accessibility text + pointer", pointer: pointer)
             return
         }
 
@@ -98,14 +120,14 @@ final class SelectionTracker: NSObject {
         AXValueGetValue(boundsValue, .cgRect, &bounds)
         guard !bounds.isEmpty else {
             DebugLogger.log("Selection bounds are empty; using pointer anchor.")
-            emit(text: text, anchor: .pointer(lastPointer), source: "Accessibility text + pointer")
+            emit(text: text, anchor: .pointer(pointer), source: "Accessibility text + pointer", pointer: pointer)
             return
         }
 
-        emit(text: text, anchor: .accessibilityBounds(bounds), source: "Accessibility")
+        emit(text: text, anchor: .accessibilityBounds(bounds), source: "Accessibility", pointer: pointer)
     }
 
-    private func emit(text: String, anchor: TextSelection.Anchor, source: String) {
+    private func emit(text: String, anchor: TextSelection.Anchor, source: String, pointer: NSPoint) {
         let signature: String
         switch anchor {
         case let .accessibilityBounds(bounds):
@@ -123,10 +145,14 @@ final class SelectionTracker: NSObject {
         lastSelectionSignature = signature
         lastSelectionTime = now
         DebugLogger.log("Selection from \(source): \(text.prefix(80))")
-        onSelection?(TextSelection(text: text, anchor: anchor, pointer: lastPointer))
+        onSelection?(TextSelection(text: text, anchor: anchor, pointer: pointer))
     }
 
-    private func beginClipboardFallback(for focusedElement: AXUIElement?) {
+    private func beginClipboardFallback(for focusedElement: AXUIElement?, requestID: Int, pointer: NSPoint) {
+        guard isRunning, requestID == latestSelectionRequestID else {
+            DebugLogger.log("Ignoring stale clipboard fallback request.")
+            return
+        }
         guard clipboardFallbackIsEnabled else {
             DebugLogger.log("Clipboard fallback is disabled (TINTAP_CLIPBOARD_FALLBACK=0).")
             return
@@ -142,21 +168,38 @@ final class SelectionTracker: NSObject {
         let pasteboard = NSPasteboard.general
         clipboardSnapshot = snapshot(of: pasteboard)
         clipboardChangeCount = pasteboard.changeCount
+        activeClipboardFallbackRequestID = requestID
 
         guard postCopyShortcut() else {
             DebugLogger.log("Could not post Command-C for clipboard fallback.")
+            activeClipboardFallbackRequestID = nil
             clipboardSnapshot = nil
             return
         }
 
         DebugLogger.log("AXSelectedText unavailable; trying clipboard fallback.")
-        perform(#selector(Self.readClipboardFallback), with: nil, afterDelay: 0.12)
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.readClipboardFallback(requestID: requestID, pointer: pointer)
+        }
+        clipboardReadWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
     }
 
-    @objc private func readClipboardFallback() {
+    private func readClipboardFallback(requestID: Int, pointer: NSPoint) {
         let pasteboard = NSPasteboard.general
         defer {
+            clipboardReadWorkItem = nil
+            if activeClipboardFallbackRequestID == requestID {
+                activeClipboardFallbackRequestID = nil
+            }
             restoreClipboard()
+        }
+
+        guard isRunning,
+              requestID == latestSelectionRequestID,
+              activeClipboardFallbackRequestID == requestID else {
+            DebugLogger.log("Ignoring stale clipboard fallback read.")
+            return
         }
 
         guard pasteboard.changeCount != clipboardChangeCount else {
@@ -175,7 +218,7 @@ final class SelectionTracker: NSObject {
             return
         }
 
-        emit(text: text, anchor: .pointer(lastPointer), source: "Clipboard fallback")
+        emit(text: text, anchor: .pointer(pointer), source: "Clipboard fallback", pointer: pointer)
     }
 
     private func snapshot(of pasteboard: NSPasteboard) -> [NSPasteboardItem] {
@@ -199,6 +242,17 @@ final class SelectionTracker: NSObject {
             pasteboard.writeObjects(clipboardSnapshot)
         }
         DebugLogger.log("Restored clipboard after fallback.")
+    }
+
+    private func cancelPendingSelectionWork(shouldRestoreClipboard: Bool) {
+        selectionReadWorkItem?.cancel()
+        selectionReadWorkItem = nil
+        clipboardReadWorkItem?.cancel()
+        clipboardReadWorkItem = nil
+        activeClipboardFallbackRequestID = nil
+        if shouldRestoreClipboard {
+            restoreClipboard()
+        }
     }
 
     private func postCopyShortcut() -> Bool {

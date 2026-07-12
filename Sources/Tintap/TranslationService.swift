@@ -1,6 +1,14 @@
 import Foundation
 
 struct TranslationService {
+    private let session: URLSession
+    private let cache: TranslationCacheStore
+
+    init(session: URLSession = .shared, cache: TranslationCacheStore = .shared) {
+        self.session = session
+        self.cache = cache
+    }
+
     func translate(_ text: String, using configuration: ModelConfiguration) async throws -> String {
         guard !configuration.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw TranslationError.missingAPIKey
@@ -10,6 +18,17 @@ struct TranslationService {
         }
         guard let endpoint = configuration.requestURL else {
             throw TranslationError.invalidBaseURL
+        }
+        let cacheKey = TranslationCacheKey(
+            endpoint: endpoint.absoluteString,
+            apiFormat: configuration.apiFormat,
+            model: configuration.model,
+            targetLanguage: configuration.targetLanguage,
+            sourceText: text
+        )
+        if let cachedTranslation = await cache.value(for: cacheKey) {
+            DebugLogger.log("Returning cached translation.")
+            return cachedTranslation
         }
 
         let systemPrompt = "You are a precise translation engine. Return only the translation, preserving meaning, formatting, and proper nouns."
@@ -41,7 +60,7 @@ struct TranslationService {
             ))
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw TranslationError.invalidResponse }
         if httpResponse.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("text/html") == true {
             throw TranslationError.webPageResponse(endpoint.absoluteString)
@@ -61,12 +80,39 @@ struct TranslationService {
         guard let translated = translated?.trimmingCharacters(in: .whitespacesAndNewlines), !translated.isEmpty else {
             throw TranslationError.invalidResponse
         }
+        await cache.set(translated, for: cacheKey)
         return translated
     }
 
     private func errorMessage(from data: Data) -> String? {
         try? JSONDecoder().decode(APIErrorResponse.self, from: data).error.message
     }
+}
+
+actor TranslationCacheStore {
+    static let shared = TranslationCacheStore()
+
+    private var storage: [TranslationCacheKey: String] = [:]
+
+    func value(for key: TranslationCacheKey) -> String? {
+        storage[key]
+    }
+
+    func set(_ value: String, for key: TranslationCacheKey) {
+        storage[key] = value
+    }
+
+    func clear() {
+        storage.removeAll()
+    }
+}
+
+struct TranslationCacheKey: Hashable {
+    let endpoint: String
+    let apiFormat: ModelAPIFormat
+    let model: String
+    let targetLanguage: String
+    let sourceText: String
 }
 
 private struct Message: Codable {
