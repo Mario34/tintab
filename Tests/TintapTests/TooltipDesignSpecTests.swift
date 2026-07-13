@@ -10,6 +10,8 @@ struct TooltipDesignSpecTests {
         #expect(TooltipDesignSpec.progressSize.height == 97)
         #expect(TooltipDesignSpec.compactButtonSize.width == 56)
         #expect(TooltipDesignSpec.compactButtonSize.height == 23)
+        #expect(TooltipDesignSpec.borderWidth == 1)
+        #expect(!TooltipDesignSpec.usesSystemWindowShadow)
         #expect(TooltipDesignSpec.resultSize(forContentHeight: 93).width == 400)
         #expect(TooltipDesignSpec.resultSize(forContentHeight: 93).height == 205)
     }

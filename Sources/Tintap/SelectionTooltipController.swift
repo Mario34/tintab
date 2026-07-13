@@ -9,6 +9,8 @@ enum TooltipDesignSpec {
     static let resultMaximumHeight: CGFloat = 353
     static let resultMaximumContentHeight: CGFloat = 240
     static let cornerRadius: CGFloat = 10
+    static let borderWidth: CGFloat = 1
+    static let usesSystemWindowShadow = false
     static let horizontalInset: CGFloat = 17
     static let headerDividerTop: CGFloat = 45
     static let resultContentTop: CGFloat = 65
@@ -27,6 +29,7 @@ enum TooltipDesignSpec {
 private enum TooltipPalette {
     static let compactBackground = NSColor(calibratedWhite: 64 / 255, alpha: 0.8)
     static let resultBackground = NSColor(calibratedWhite: 102 / 255, alpha: 0.8)
+    static let border = NSColor.white.withAlphaComponent(0.16)
     static let hoverFill = NSColor.white.withAlphaComponent(0.12)
     static let divider = NSColor.white.withAlphaComponent(0.72)
     static let primaryText = NSColor.white
@@ -78,6 +81,8 @@ final class SelectionTooltipController {
         backgroundView.state = .active
         backgroundView.wantsLayer = true
         backgroundView.layer?.cornerRadius = TooltipDesignSpec.cornerRadius
+        backgroundView.layer?.borderWidth = TooltipDesignSpec.borderWidth
+        backgroundView.layer?.borderColor = TooltipPalette.border.cgColor
         backgroundView.layer?.masksToBounds = true
 
         panel = NSPanel(
@@ -89,7 +94,7 @@ final class SelectionTooltipController {
         panel.contentView = backgroundView
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = TooltipDesignSpec.usesSystemWindowShadow
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         panel.hidesOnDeactivate = false

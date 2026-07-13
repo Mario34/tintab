@@ -51,6 +51,7 @@ final class ModelConfigurationPanel: NSWindowController, NSWindowDelegate {
         apiKeyField = NSSecureTextField(string: configuration.apiKey)
         apiKeyField.placeholderString = "sk-…"
         apiKeyField.translatesAutoresizingMaskIntoConstraints = false
+        apiKeyField.widthAnchor.constraint(equalToConstant: 350).isActive = true
         systemPromptTextView = NSTextView()
         systemPromptTextView.string = configuration.systemPrompt
         systemPromptTextView.font = .systemFont(ofSize: 13)
